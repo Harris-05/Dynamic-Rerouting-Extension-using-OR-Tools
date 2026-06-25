@@ -2,14 +2,17 @@ from ortools.constraint_solver import pywrapcp
 from ortools.constraint_solver import routing_enums_pb2
 
 
-# =====================================================
-# GENERIC VRP SOLVER
-# =====================================================
+# ============================================================
+# VRP SOLVER WITH OPTIONAL WARM START
+# ============================================================
 
-def solve_vrp(distance_matrix,
-              num_vehicles=1,
-              depot=0,
-              max_distance=None):
+def solve_vrp(
+    distance_matrix,
+    num_vehicles=1,
+    depot=0,
+    max_distance=9999,
+    initial_routes=None
+):
 
     manager = pywrapcp.RoutingIndexManager(
         len(distance_matrix),
@@ -36,15 +39,13 @@ def solve_vrp(distance_matrix,
         transit_callback_index
     )
 
-    if max_distance:
-
-        routing.AddDimension(
-            transit_callback_index,
-            0,
-            max_distance,
-            True,
-            "Distance"
-        )
+    routing.AddDimension(
+        transit_callback_index,
+        0,
+        max_distance,
+        True,
+        "Distance"
+    )
 
     search_parameters = (
         pywrapcp.DefaultRoutingSearchParameters()
@@ -55,42 +56,76 @@ def solve_vrp(distance_matrix,
         .PATH_CHEAPEST_ARC
     )
 
-    solution = routing.SolveWithParameters(
-        search_parameters
+    search_parameters.local_search_metaheuristic = (
+        routing_enums_pb2.LocalSearchMetaheuristic
+        .GUIDED_LOCAL_SEARCH
     )
+
+    search_parameters.time_limit.seconds = 2
+
+    # ------------------------------------------------
+    # NORMAL SOLVE
+    # ------------------------------------------------
+
+    if initial_routes is None:
+
+        solution = routing.SolveWithParameters(
+            search_parameters
+        )
+
+    # ------------------------------------------------
+    # WARM START SOLVE
+    # ------------------------------------------------
+
+    else:
+
+        initial_assignment = (
+            routing.ReadAssignmentFromRoutes(
+                initial_routes,
+                True
+            )
+        )
+
+        solution = (
+            routing.SolveFromAssignmentWithParameters(
+                initial_assignment,
+                search_parameters
+            )
+        )
+
+    if not solution:
+        return None
 
     routes = {}
 
-    if solution:
+    for vehicle_id in range(num_vehicles):
 
-        for vehicle_id in range(num_vehicles):
+        route = []
 
-            route = []
+        index = routing.Start(vehicle_id)
 
-            index = routing.Start(vehicle_id)
-
-            while not routing.IsEnd(index):
-
-                route.append(
-                    manager.IndexToNode(index)
-                )
-
-                index = solution.Value(
-                    routing.NextVar(index)
-                )
+        while not routing.IsEnd(index):
 
             route.append(
                 manager.IndexToNode(index)
             )
 
-            routes[vehicle_id] = route
+            index = solution.Value(
+                routing.NextVar(index)
+            )
+
+        route.append(
+            manager.IndexToNode(index)
+        )
+
+        routes[vehicle_id] = route
 
     return routes
 
 
-# =====================================================
+# ============================================================
 # INITIAL DATA
-# =====================================================
+# ============================================================
 
 distance_matrix = [
     [0,10,15,20,18,22],
@@ -101,26 +136,27 @@ distance_matrix = [
     [22,30,14,11,16,0]
 ]
 
-num_vehicles = 1
-
-print("\nINITIAL OPTIMIZATION")
+print("=" * 60)
+print("INITIAL OPTIMIZATION")
+print("=" * 60)
 
 routes = solve_vrp(
-    distance_matrix,
-    num_vehicles=num_vehicles,
+    distance_matrix=distance_matrix,
+    num_vehicles=1,
     depot=0,
     max_distance=100
 )
 
+print("Initial Route:")
 print(routes)
 
-# Example output:
+# Example:
 # {0: [0,1,2,5,3,4,0]}
 
 
-# =====================================================
-# SIMULATE VEHICLE PROGRESS
-# =====================================================
+# ============================================================
+# SIMULATE EXECUTION
+# ============================================================
 
 vehicle_route = routes[0]
 
@@ -128,11 +164,15 @@ completed_nodes = []
 
 current_time = 0
 
-print("\nSIMULATING EXECUTION")
+print("\n" + "=" * 60)
+print("SIMULATING VEHICLE MOVEMENT")
+print("=" * 60)
 
-# vehicle completed first two customers
+# Vehicle completed first customer
 
-completed_nodes.append(vehicle_route[1])
+completed_nodes.append(
+    vehicle_route[1]
+)
 
 current_time += distance_matrix[
     vehicle_route[0]
@@ -140,7 +180,11 @@ current_time += distance_matrix[
     vehicle_route[1]
 ]
 
-completed_nodes.append(vehicle_route[2])
+# Vehicle completed second customer
+
+completed_nodes.append(
+    vehicle_route[2]
+)
 
 current_time += distance_matrix[
     vehicle_route[1]
@@ -148,7 +192,9 @@ current_time += distance_matrix[
     vehicle_route[2]
 ]
 
-current_location = vehicle_route[2]
+current_location = (
+    vehicle_route[2]
+)
 
 remaining_nodes = []
 
@@ -157,26 +203,27 @@ for node in vehicle_route[3:]:
     if node != 0:
         remaining_nodes.append(node)
 
-print("Completed:", completed_nodes)
+print("Completed Nodes:", completed_nodes)
 print("Current Location:", current_location)
-print("Remaining:", remaining_nodes)
+print("Remaining Nodes:", remaining_nodes)
 print("Current Time:", current_time)
 
 
-# =====================================================
+# ============================================================
 # NEW ORDER ARRIVES
-# =====================================================
+# ============================================================
 
-print("\nNEW ORDER ARRIVED")
+print("\n" + "=" * 60)
+print("NEW ORDER ARRIVED")
+print("=" * 60)
 
-new_order = 6
+new_customer = 6
 
-print("New customer:", new_order)
+print(
+    f"New Customer = {new_customer}"
+)
 
-
-# =====================================================
-# EXPAND DISTANCE MATRIX
-# =====================================================
+# Expanded matrix including new customer
 
 expanded_matrix = [
     [0,10,15,20,18,22,19],
@@ -189,25 +236,23 @@ expanded_matrix = [
 ]
 
 
-# =====================================================
-# BUILD REROUTING SUBPROBLEM
-# =====================================================
+# ============================================================
+# BUILD REROUTING PROBLEM
+# ============================================================
 
 active_nodes = (
     [current_location]
     + remaining_nodes
-    + [new_order]
+    + [new_customer]
 )
 
-print("Nodes for rerouting:", active_nodes)
+print(
+    "Nodes To Re-Optimize:",
+    active_nodes
+)
 
-# active_nodes might become:
+# Example:
 # [2,5,3,4,6]
-
-
-# =====================================================
-# CREATE SMALL MATRIX
-# =====================================================
 
 mapping = [0] + active_nodes
 
@@ -226,41 +271,78 @@ for i in mapping:
     small_matrix.append(row)
 
 
-# =====================================================
-# REROUTE
-# =====================================================
+# ============================================================
+# CREATE WARM START ROUTE
+# ============================================================
 
-print("\nREROUTING")
+old_remaining_route = []
 
-new_routes = solve_vrp(
-    small_matrix,
-    num_vehicles=1,
-    depot=0,
-    max_distance=100
+for node in remaining_nodes:
+
+    old_remaining_route.append(
+        active_nodes.index(node) + 1
+    )
+
+print(
+    "\nWarm Start Route:",
+    old_remaining_route
 )
 
-print("Local Route:", new_routes)
+# Example:
+# [2,3,4]
 
-# convert back to original ids
 
-rerouted_path = []
+# ============================================================
+# DYNAMIC REROUTE
+# ============================================================
+
+print("\n" + "=" * 60)
+print("DYNAMIC RE-ROUTING")
+print("=" * 60)
+
+new_routes = solve_vrp(
+    distance_matrix=small_matrix,
+    num_vehicles=1,
+    depot=0,
+    max_distance=100,
+    initial_routes=[
+        old_remaining_route
+    ]
+)
+
+print("Local Route:")
+print(new_routes)
+
+
+# ============================================================
+# CONVERT BACK TO ORIGINAL IDS
+# ============================================================
+
+final_route = []
 
 for node in new_routes[0]:
 
-    rerouted_path.append(
+    final_route.append(
         mapping[node]
     )
 
-print("\nFINAL REROUTED PATH")
+print("\nFinal Dynamic Route:")
+print(final_route)
 
-print(rerouted_path)
 
-print("\nSTATE")
+# ============================================================
+# FINAL STATE
+# ============================================================
+
+print("\n" + "=" * 60)
+print("FINAL STATE")
+print("=" * 60)
 
 print({
     "completed_nodes": completed_nodes,
     "current_location": current_location,
     "current_time": current_time,
     "remaining_nodes": remaining_nodes,
-    "new_order": new_order
+    "new_customer": new_customer,
+    "rerouted_path": final_route
 })
